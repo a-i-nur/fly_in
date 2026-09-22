@@ -44,3 +44,19 @@ class Zone:
     def is_blocked(self) -> bool:
         """Return whether this zone cannot be entered."""
         return self.zone_type is ZoneType.BLOCKED
+
+
+@dataclass(frozen=True)
+class Connection:
+    """Store one fixed, undirected map connection."""
+
+    zone_a: str
+    zone_b: str
+    max_link_capacity: int = 1
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """Return the canonical identity shared by both endpoint orders."""
+        if self.zone_a <= self.zone_b:
+            return (self.zone_a, self.zone_b)
+        return (self.zone_b, self.zone_a)
