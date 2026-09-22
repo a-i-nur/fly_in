@@ -60,3 +60,17 @@ class Connection:
         if self.zone_a <= self.zone_b:
             return (self.zone_a, self.zone_b)
         return (self.zone_b, self.zone_a)
+
+
+class GraphError(ValueError):
+    """Describe a structural Graph failure and its offending value."""
+
+    def __init__(
+        self,
+        reason: str,
+        subject: Zone | Connection | ZoneRole | None = None,
+    ) -> None:
+        """Store the stable cause and value needed for source context."""
+        self.reason = reason
+        self.subject = subject
+        super().__init__(reason)
