@@ -74,3 +74,105 @@ class GraphError(ValueError):
         self.reason = reason
         self.subject = subject
         super().__init__(reason)
+
+
+class Graph:
+    """Store fixed zones, connections, and bidirectional adjacency."""
+
+    def __init__(
+        self, zones: list[Zone], connections: list[Connection] | None = None
+    ) -> None:
+        """Build fixed zone and connection storage with terminal references."""
+        self._zones: dict[str, Zone] = {}
+        self._connections: dict[tuple[str, str], Connection] = {}
+        self._adjacent: dict[str, dict[str, Connection]] = {}
+        starts: list[Zone] = []
+        ends: list[Zone] = []
+
+        for zone in zones:
+            if zone.name in self._zones:
+                raise GraphError("duplicate zone name", zone)
+            self._zones[zone.name] = zone
+            self._adjacent[zone.name] = {}
+
+            if zone.role is ZoneRole.START:
+                starts.append(zone)
+            elif zone.role is ZoneRole.END:
+                ends.append(zone)
+
+        if len(starts) != 1:
+            raise GraphError(
+                "expected exactly one start zone",
+                starts[-1] if starts else ZoneRole.START,
+            )
+        if len(ends) != 1:
+            raise GraphError(
+                "expected exactly one end zone",
+                ends[-1] if ends else ZoneRole.END,
+            )
+
+        self._start = starts[0]
+        self._end = ends[0]
+
+        if connections is not None:
+            for connection in connections:
+                if connection.zone_a == connection.zone_b:
+                    raise GraphError(
+                        "self-connection is not allowed", connection
+                    )
+                if (
+                    connection.zone_a not in self._zones
+                    or connection.zone_b not in self._zones
+                ):
+                    raise GraphError(
+                        "connection endpoint is not a zone", connection
+                    )
+                if connection.key in self._connections:
+                    raise GraphError("duplicate connection", connection)
+
+                self._connections[connection.key] = connection
+                adjacent_a = self._adjacent[connection.zone_a]
+                adjacent_b = self._adjacent[connection.zone_b]
+                adjacent_a[connection.zone_b] = connection
+                adjacent_b[connection.zone_a] = connection
+
+    @property
+    def start(self) -> Zone:
+        """Return the fixed start zone."""
+        return self._start
+
+    @property
+    def end(self) -> Zone:
+        """Return the fixed end zone."""
+        return self._end
+
+    @property
+    def zones(self) -> tuple[Zone, ...]:
+        """Return immutable fixed zones without exposing the name registry."""
+        return tuple(self._zones.values())
+
+    @property
+    def zone_count(self) -> int:
+        """Return the number of fixed zones."""
+        return len(self._zones)
+
+    @property
+    def connection_count(self) -> int:
+        """Return the number of fixed connections."""
+        return len(self._connections)
+
+    def zone(self, name: str) -> Zone:
+        """Return the fixed zone with the supplied name."""
+        return self._zones[name]
+
+    def neighbors(self, name: str) -> tuple[str, ...]:
+        """Return names of zones joined to the supplied zone."""
+        return tuple(self._adjacent[name])
+
+    def connection(self, zone_a: str, zone_b: str) -> Connection:
+        """Return the one shared connection between two zones."""
+        if zone_a <= zone_b:
+            key = (zone_a, zone_b)
+        else:
+            key = (zone_b, zone_a)
+        return self._connections[key]
