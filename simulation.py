@@ -32,3 +32,17 @@ class TransitState:
 
 class SimulationError(ValueError):
     """Describe a rejected proposed simulation turn."""
+
+
+@dataclass(frozen=True)
+class TurnResult:
+    """Describe all committed movement facts in one turn."""
+
+    turn: int
+    arrivals: tuple[DroneState, ...]
+    transit_departures: tuple[TransitState, ...] = ()
+    movement_facts: tuple[MovementFact, ...] = ()
+    transit_arrivals: tuple[TransitState, ...] = ()
+    zone_usage: tuple[ZoneUsageFact, ...] = ()
+    link_usage: tuple[LinkUsageFact, ...] = ()
+    
