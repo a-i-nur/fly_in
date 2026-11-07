@@ -108,3 +108,30 @@ class Planner:
         return self._destination_has_room(
             drones, transits, moves, destination
         )
+
+    def _destination_has_room(
+        self,
+        drones: tuple[DroneState, ...],
+        transits: tuple[TransitState, ...],
+        moves: MoveBatch,
+        destination: str,
+    ) -> bool:
+        """Check destination commitments without forecasting release."""
+        if destination in {self._graph.start.name, self._graph.end.name}:
+            return True
+        destination_occupancy = sum(
+            current_drone.zone_name == destination
+            and current_drone.drone_id not in moves
+            for current_drone in drones
+        )
+        destination_occupancy += sum(
+            proposed_destination == destination
+            for proposed_destination in moves.values()
+        )
+        destination_occupancy += sum(
+            transit.destination == destination for transit in transits
+        )
+        return (
+            destination_occupancy + 1
+            <= self._graph.zone(destination).max_drones
+        )
