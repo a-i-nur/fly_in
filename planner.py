@@ -38,3 +38,41 @@ class Planner:
                         moves[drone.drone_id] = next_zone
                     break
         return moves
+
+    def _prefer_link_wait(
+        self,
+        drones: tuple[DroneState, ...],
+        transits: tuple[TransitState, ...],
+        moves: MoveBatch,
+        drone: DroneState,
+        next_hops: tuple[str, ...],
+        safe_hop: str,
+    ) -> bool:
+        """Compare a conditional one-turn link wait with a safe detour."""
+        safe_cost = self._route_cost_from(safe_hop, drone.zone_name)
+        assert safe_cost is not None
+        for hop in next_hops:
+            cost = self._route_cost_from(hop, drone.zone_name)
+            assert cost is not None
+            if cost[0] + 1 >= safe_cost[0]:
+                break
+            if not self._destination_has_room(drones, transits, moves, hop):
+                continue
+            connection = self._graph.connection(drone.zone_name, hop)
+            positions = {state.drone_id: state.zone_name for state in drones}
+            proposed = [
+                destination for drone_id, destination in moves.items()
+                if self._graph.connection(
+                    positions[drone_id], destination
+                ).key == connection.key
+            ]
+            if any(self._graph.zone(name).entry_duration == 2
+                   for name in proposed):
+                continue
+            usage = len(proposed) + sum(
+                transit.connection_key == connection.key
+                for transit in transits
+            )
+            if usage >= connection.max_link_capacity:
+                return True
+        return False
