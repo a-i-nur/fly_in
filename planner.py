@@ -76,3 +76,35 @@ class Planner:
             if usage >= connection.max_link_capacity:
                 return True
         return False
+
+    def _is_safe_move(
+        self,
+        drones: tuple[DroneState, ...],
+        transits: tuple[TransitState, ...],
+        moves: MoveBatch,
+        drone: DroneState,
+        destination: str,
+    ) -> bool:
+        """Return whether one move fits current and proposed commitments."""
+        connection = self._graph.connection(drone.zone_name, destination)
+        drone_positions = {
+            current_drone.drone_id: current_drone.zone_name
+            for current_drone in drones
+        }
+        link_use = sum(
+            transit.connection_key == connection.key for transit in transits
+        )
+        link_use += sum(
+            self._graph.connection(
+                drone_positions[drone_id],
+                proposed_destination,
+            ).key
+            == connection.key
+            for drone_id, proposed_destination in moves.items()
+        )
+        if link_use + 1 > connection.max_link_capacity:
+            return False
+
+        return self._destination_has_room(
+            drones, transits, moves, destination
+        )
