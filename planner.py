@@ -10,3 +10,10 @@ class PlannerError(ValueError):
     """Describe an exhausted usable-route search."""
 
 
+class Planner:
+    """Propose safe fleet moves on currently supported paths."""
+
+    def __init__(self, graph: Graph) -> None:
+        """Retain the fixed graph used to form move proposals."""
+        self._graph = graph
+
