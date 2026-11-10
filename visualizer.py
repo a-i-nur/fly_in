@@ -79,3 +79,160 @@ class GraphicalVisualizer:
             transits=transits,
             delivered_count=delivered_count,
         )
+
+    def wait_for_step(self) -> bool:
+        """Return one request from a Space release, or false when closed."""
+        if self._close_requested:
+            return False
+        while True:
+            event = pygame.event.wait()
+            if event.type == pygame.QUIT:
+                return False
+            elif event.type == pygame.VIDEORESIZE:
+                self._resize(event.size)
+            elif event.type == pygame.KEYUP and event.key == pygame.K_SPACE:
+                return True
+
+    def wait_for_close(self) -> None:
+        """Keep the final committed view visible until the window closes."""
+        if self._close_requested:
+            return
+        while True:
+            event = pygame.event.wait()
+            if event.type == pygame.QUIT:
+                return
+            if event.type == pygame.VIDEORESIZE:
+                self._resize(event.size)
+
+    def render_committed(
+        self,
+        result: TurnResult,
+        drones: tuple[DroneState, ...],
+        transits: tuple[TransitState, ...],
+        delivered_count: int,
+    ) -> None:
+        """Render only the supplied committed movement facts."""
+        self._last_result = result
+        self._last_drones = drones
+        self._last_transits = transits
+        self._last_delivered_count = delivered_count
+        if self._surface is not None:
+            for step in range(self.ANIMATION_STEPS):
+                if self._consume_animation_events():
+                    return
+                surface = self._surface
+                if surface is None:
+                    return
+                self.draw(
+                    surface,
+                    self.movement_segments(result, *surface.get_size()),
+                    step / (self.ANIMATION_STEPS - 1),
+                    result,
+                    drones,
+                    transits,
+                    delivered_count,
+                )
+                pygame.time.wait(40)
+
+    def _consume_animation_events(self) -> bool:
+        """Handle close or resize while discarding presentation-time input."""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self._close_requested = True
+                return True
+            if event.type == pygame.VIDEORESIZE:
+                self._resize(event.size)
+        return False
+
+    def close(self) -> None:
+        """Release the Pygame window after application execution ends."""
+        pygame.quit()
+        self._surface = None
+
+    def _resize(self, size: tuple[int, int]) -> None:
+        """Recreate and redraw the resizable display surface."""
+        self._surface = pygame.display.set_mode(size, pygame.RESIZABLE)
+        result = self._last_result
+        segments: tuple[MovementSegment, ...] = ()
+        if result is not None:
+            segments = self.movement_segments(result, *size)
+        self.draw(
+            self._surface,
+            segments,
+            result=result,
+            drones=self._last_drones,
+            transits=self._last_transits,
+            delivered_count=self._last_delivered_count,
+        )
+
+    def draw(
+        self,
+        surface: pygame.Surface,
+        segments: tuple[MovementSegment, ...] = (),
+        progress: float = 1.0,
+        result: TurnResult | None = None,
+        drones: tuple[DroneState, ...] = (),
+        transits: tuple[TransitState, ...] = (),
+        delivered_count: int = 0,
+    ) -> None:
+        """Render the graph at the surface's current size."""
+        width, height = surface.get_size()
+        positions = self.screen_positions(width, height)
+        surface.fill(self.BACKGROUND)
+        self._draw_grid(surface, width, height)
+        self._draw_connections(surface, positions)
+        shown_delivered_count = self._displayed_delivered_count(
+            result, delivered_count, progress
+        )
+        self._draw_zones(
+            surface, positions, result, drones, shown_delivered_count
+        )
+        self._draw_movement(surface, segments, progress, result)
+        turn = 0 if result is None else result.turn
+        self._draw_turn(surface, f"Turn: {turn}")
+        pygame.display.flip()
+
+    def _draw_turn(self, surface: pygame.Surface, text: str) -> None:
+        """Draw the sole top-left status line."""
+        font = pygame.font.Font(None, 28)
+        label = font.render(text, True, self.LABEL_COLOR)
+        surface.blit(label, (12, 12))
+
+    def movement_segments(
+        self, result: TurnResult, width: int, height: int
+    ) -> tuple[MovementSegment, ...]:
+        """Return visual paths using only committed movement observations."""
+        positions = self.screen_positions(width, height)
+        departures = {
+            transit.drone_id for transit in result.transit_departures
+        }
+        arrivals = {transit.drone_id for transit in result.transit_arrivals}
+        segments: list[MovementSegment] = []
+        for drone_id, source, destination in result.movement_facts:
+            source_position = positions[source]
+            destination_position = positions[destination]
+            midpoint = self._midpoint(source_position, destination_position)
+            if drone_id in departures:
+                segments.append((drone_id, source_position, midpoint))
+            elif drone_id in arrivals:
+                segments.append((drone_id, midpoint, destination_position))
+            else:
+                segments.append(
+                    (drone_id, source_position, destination_position)
+                )
+        return tuple(segments)
+
+    @staticmethod
+    def _midpoint(first: ScreenPoint, second: ScreenPoint) -> ScreenPoint:
+        """Return the screen midpoint of one committed connection."""
+        return ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
+
+    @staticmethod
+    def _interpolate(
+        start: ScreenPoint, end: ScreenPoint, progress: float
+    ) -> ScreenPoint:
+        """Return one presentation position between committed endpoints."""
+        return (
+            start[0] + (end[0] - start[0]) * progress,
+            start[1] + (end[1] - start[1]) * progress,
+        )
