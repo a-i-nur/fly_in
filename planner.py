@@ -135,3 +135,86 @@ class Planner:
             destination_occupancy + 1
             <= self._graph.zone(destination).max_drones
         )
+
+    def _usable_next_hops(self, origin: str) -> tuple[str, ...]:
+        """Return usable first hops in fixed route-preference order."""
+        if self._graph.zone(origin).is_blocked:
+            return ()
+        candidates: list[tuple[int, int, int, str]] = []
+        for index, neighbor in enumerate(self._graph.neighbors(origin)):
+            if (
+                origin != self._graph.start.name
+                and neighbor == self._graph.start.name
+            ):
+                continue
+            route_cost = self._route_cost_from(neighbor, origin)
+            if route_cost is not None:
+                candidates.append((*route_cost, index, neighbor))
+        candidates.sort()
+        return tuple(candidate[3] for candidate in candidates)
+
+    def _route_cost_from(
+        self, first_hop: str, origin: str
+    ) -> tuple[int, int] | None:
+        """Return the preferred cost from one first hop to the end."""
+        first_zone = self._graph.zone(first_hop)
+        if first_zone.is_blocked:
+            return None
+        has_priority = first_zone.zone_type is ZoneType.PRIORITY
+        initial_cost = (
+            first_zone.entry_duration,
+            0 if has_priority else 1,
+        )
+        paths: list[tuple[int, int, int, str, bool]] = [
+            (*initial_cost, 0, first_hop, has_priority)
+        ]
+        best_costs: dict[str, tuple[int, int]] = {first_hop: initial_cost}
+        sequence = 0
+
+        while paths:
+            turns, priority_penalty, _, zone_name, path_has_priority = heappop(
+                paths
+            )
+            if best_costs[zone_name] != (turns, priority_penalty):
+                continue
+            if zone_name == self._graph.end.name:
+                return (turns, priority_penalty)
+            for neighbor in self._graph.neighbors(zone_name):
+                destination = self._graph.zone(neighbor)
+                if (
+                    neighbor == origin
+                    or destination.is_blocked
+                    or (
+                        origin != self._graph.start.name
+                        and neighbor == self._graph.start.name
+                    )
+                ):
+                    continue
+                next_has_priority = (
+                    path_has_priority
+                    or destination.zone_type is ZoneType.PRIORITY
+                )
+                candidate_cost = (
+                    turns + destination.entry_duration,
+                    0 if next_has_priority else 1,
+                )
+                previous_cost = best_costs.get(neighbor)
+                if (
+                    previous_cost is not None
+                    and candidate_cost >= previous_cost
+                ):
+                    continue
+                best_costs[neighbor] = candidate_cost
+                sequence += 1
+                heappush(
+                    paths,
+                    (
+                        candidate_cost[0],
+                        candidate_cost[1],
+                        sequence,
+                        neighbor,
+                        next_has_priority,
+                    ),
+                )
+        return None
+    
