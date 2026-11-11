@@ -236,3 +236,96 @@ class GraphicalVisualizer:
             start[0] + (end[0] - start[0]) * progress,
             start[1] + (end[1] - start[1]) * progress,
         )
+
+    def _draw_movement(
+        self,
+        surface: pygame.Surface,
+        segments: tuple[MovementSegment, ...],
+        progress: float,
+        result: TurnResult | None,
+    ) -> None:
+        """Draw each committed drone at its presentation-only position."""
+        delivered_ids = self._delivered_ids(result)
+        for drone_id, start, end in segments:
+            if progress >= 1.0 and drone_id in delivered_ids:
+                continue
+            position = self._interpolate(start, end, progress)
+            self._draw_drone(surface, drone_id, position)
+
+    def _displayed_delivered_count(
+        self,
+        result: TurnResult | None,
+        delivered_count: int,
+        progress: float,
+    ) -> int:
+        """Delay a committed goal count until its visual arrivals finish."""
+        if progress >= 1.0:
+            return delivered_count
+        return delivered_count - len(self._delivered_ids(result))
+
+    def _delivered_ids(self, result: TurnResult | None) -> set[int]:
+        """Return only identities delivered by this committed result."""
+        if result is None:
+            return set()
+        return {
+            drone.drone_id
+            for drone in result.arrivals
+            if drone.zone_name == self._graph.end.name
+        }
+
+    def _draw_drone(
+        self,
+        surface: pygame.Surface,
+        drone_id: int,
+        position: ScreenPoint,
+    ) -> None:
+        """Draw one outlined white drone dot with its readable identity."""
+        pygame.draw.circle(surface, self.DRONE_OUTLINE, position, 11)
+        pygame.draw.circle(surface, self.DRONE_COLOR, position, 9)
+        font = pygame.font.Font(None, 15)
+        label = font.render(f"D{drone_id}", True, self.DRONE_OUTLINE)
+        rectangle = label.get_rect(center=position)
+        surface.blit(label, rectangle)
+
+    def screen_positions(
+        self, width: int, height: int
+    ) -> dict[str, ScreenPoint]:
+        """Return equal-scale, padded screen positions by zone name."""
+        minimum_x, maximum_x, minimum_y, maximum_y = self._bounds()
+        span_x = max(float(maximum_x - minimum_x), 1.0)
+        span_y = max(float(maximum_y - minimum_y), 1.0)
+        available_width = max(width - 2 * self.PADDING, 1)
+        available_height = max(height - 2 * self.PADDING, 1)
+        scale = min(available_width / span_x, available_height / span_y)
+        center_x = (minimum_x + maximum_x) / 2
+        center_y = (minimum_y + maximum_y) / 2
+
+        return {
+            zone.name: (
+                width / 2 + (zone.x - center_x) * scale,
+                height / 2 - (zone.y - center_y) * scale,
+            )
+            for zone in self._graph.zones
+        }
+
+    def scale_for(self, width: int, height: int) -> float:
+        """Return the single world-to-screen scale for a surface size."""
+        positions = self.screen_positions(width, height)
+        zones = self._graph.zones
+        if len(zones) < 2:
+            return 1.0
+        first = zones[0]
+        for zone in zones[1:]:
+            delta_x = zone.x - first.x
+            if delta_x != 0:
+                return abs(
+                    (positions[zone.name][0] - positions[first.name][0])
+                    / delta_x
+                )
+            delta_y = zone.y - first.y
+            if delta_y != 0:
+                return abs(
+                    (positions[zone.name][1] - positions[first.name][1])
+                    / delta_y
+                )
+        return 1.0
