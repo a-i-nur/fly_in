@@ -187,6 +187,20 @@ class GraphicalVisualizer:
         self._draw_zones(
             surface, positions, result, drones, shown_delivered_count
         )
+        moving = {drone_id for drone_id, _, _ in segments}
+        for drone in drones:
+            if drone.drone_id not in moving and drone.zone_name not in {
+                self._graph.start.name, self._graph.end.name,
+            }:
+                self._draw_drone(
+                    surface, drone.drone_id, positions[drone.zone_name]
+                )
+        for transit in transits:
+            if transit.drone_id not in moving:
+                position = self._midpoint(
+                    *(positions[name] for name in transit.connection_key)
+                )
+                self._draw_drone(surface, transit.drone_id, position)
         self._draw_movement(surface, segments, progress, result)
         turn = 0 if result is None else result.turn
         self._draw_turn(surface, f"Turn: {turn}")

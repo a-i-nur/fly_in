@@ -1,9 +1,9 @@
-"""Route proposals for currently supported Fly-in paths."""
+"""Capacity-aware route schedules for Fly-in fleets."""
 
 from heapq import heappop, heappush
 
 from model import Graph, ZoneType
-from simulation import DroneState, MoveBatch, TransitState
+from simulation import MoveBatch
 
 
 class PlannerError(ValueError):
@@ -11,209 +11,95 @@ class PlannerError(ValueError):
 
 
 class Planner:
-    """Propose safe fleet moves on currently supported paths."""
+    """Reserve complete routes with simultaneous departures and arrivals."""
 
     def __init__(self, graph: Graph) -> None:
-        """Retain the fixed graph used to form move proposals."""
+        """Retain the fixed graph used to schedule the fleet."""
         self._graph = graph
 
-    def propose(
-        self,
-        drones: tuple[DroneState, ...],
-        transits: tuple[TransitState, ...] = (),
-    ) -> MoveBatch:
-        """Advance safe active drones toward the end."""
-        moves: dict[int, str] = {}
-        for drone in sorted(drones, key=lambda state: state.drone_id):
-            next_hops = self._usable_next_hops(drone.zone_name)
-            if not next_hops:
-                raise PlannerError("no usable route")
-            for next_zone in next_hops:
-                if self._is_safe_move(
-                    drones, transits, moves, drone, next_zone
-                ):
-                    if not self._prefer_link_wait(
-                        drones, transits, moves, drone, next_hops, next_zone
-                    ):
-                        moves[drone.drone_id] = next_zone
-                    break
-        return moves
-
-    def _prefer_link_wait(
-        self,
-        drones: tuple[DroneState, ...],
-        transits: tuple[TransitState, ...],
-        moves: MoveBatch,
-        drone: DroneState,
-        next_hops: tuple[str, ...],
-        safe_hop: str,
-    ) -> bool:
-        """Compare a conditional one-turn link wait with a safe detour."""
-        safe_cost = self._route_cost_from(safe_hop, drone.zone_name)
-        assert safe_cost is not None
-        for hop in next_hops:
-            cost = self._route_cost_from(hop, drone.zone_name)
-            assert cost is not None
-            if cost[0] + 1 >= safe_cost[0]:
-                break
-            if not self._destination_has_room(drones, transits, moves, hop):
-                continue
-            connection = self._graph.connection(drone.zone_name, hop)
-            positions = {state.drone_id: state.zone_name for state in drones}
-            proposed = [
-                destination for drone_id, destination in moves.items()
-                if self._graph.connection(
-                    positions[drone_id], destination
-                ).key == connection.key
-            ]
-            if any(self._graph.zone(name).entry_duration == 2
-                   for name in proposed):
-                continue
-            usage = len(proposed) + sum(
-                transit.connection_key == connection.key
-                for transit in transits
-            )
-            if usage >= connection.max_link_capacity:
-                return True
-        return False
-
-    def _is_safe_move(
-        self,
-        drones: tuple[DroneState, ...],
-        transits: tuple[TransitState, ...],
-        moves: MoveBatch,
-        drone: DroneState,
-        destination: str,
-    ) -> bool:
-        """Return whether one move fits current and proposed commitments."""
-        connection = self._graph.connection(drone.zone_name, destination)
-        drone_positions = {
-            current_drone.drone_id: current_drone.zone_name
-            for current_drone in drones
-        }
-        link_use = sum(
-            transit.connection_key == connection.key for transit in transits
-        )
-        link_use += sum(
-            self._graph.connection(
-                drone_positions[drone_id],
-                proposed_destination,
-            ).key
-            == connection.key
-            for drone_id, proposed_destination in moves.items()
-        )
-        if link_use + 1 > connection.max_link_capacity:
-            return False
-
-        return self._destination_has_room(
-            drones, transits, moves, destination
-        )
-
-    def _destination_has_room(
-        self,
-        drones: tuple[DroneState, ...],
-        transits: tuple[TransitState, ...],
-        moves: MoveBatch,
-        destination: str,
-    ) -> bool:
-        """Check destination commitments without forecasting release."""
-        if destination in {self._graph.start.name, self._graph.end.name}:
-            return True
-        destination_occupancy = sum(
-            current_drone.zone_name == destination
-            and current_drone.drone_id not in moves
-            for current_drone in drones
-        )
-        destination_occupancy += sum(
-            proposed_destination == destination
-            for proposed_destination in moves.values()
-        )
-        destination_occupancy += sum(
-            transit.destination == destination for transit in transits
-        )
-        return (
-            destination_occupancy + 1
-            <= self._graph.zone(destination).max_drones
-        )
-
-    def _usable_next_hops(self, origin: str) -> tuple[str, ...]:
-        """Return usable first hops in fixed route-preference order."""
-        if self._graph.zone(origin).is_blocked:
-            return ()
-        candidates: list[tuple[int, int, int, str]] = []
-        for index, neighbor in enumerate(self._graph.neighbors(origin)):
-            if (
-                origin != self._graph.start.name
-                and neighbor == self._graph.start.name
+    def plan(self, drone_count: int) -> tuple[MoveBatch, ...]:
+        """Return one move batch per turn, including forced-arrival turns."""
+        zones: dict[tuple[str, int], int] = {}
+        links: dict[tuple[str, str, int], int] = {}
+        schedule: list[dict[int, str]] = []
+        for drone_id in range(1, drone_count + 1):
+            # After the last delivery, any simple path takes at most 2V turns.
+            deadline = len(schedule) + 2 * self._graph.zone_count
+            route = self._route(zones, links, deadline)
+            schedule.extend({} for _ in range(route[-1][1] - len(schedule)))
+            for (source, turn), (destination, arrival) in zip(
+                route, route[1:]
             ):
-                continue
-            route_cost = self._route_cost_from(neighbor, origin)
-            if route_cost is not None:
-                candidates.append((*route_cost, index, neighbor))
-        candidates.sort()
-        return tuple(candidate[3] for candidate in candidates)
+                if destination not in {
+                    self._graph.start.name, self._graph.end.name,
+                }:
+                    key = (destination, arrival)
+                    zones[key] = zones.get(key, 0) + 1
+                if source != destination:
+                    connection = self._graph.connection(source, destination)
+                    link_key = (*connection.key, turn + 1)
+                    links[link_key] = links.get(link_key, 0) + 1
+                    schedule[turn][drone_id] = destination
+        return tuple(schedule)
 
-    def _route_cost_from(
-        self, first_hop: str, origin: str
-    ) -> tuple[int, int] | None:
-        """Return the preferred cost from one first hop to the end."""
-        first_zone = self._graph.zone(first_hop)
-        if first_zone.is_blocked:
-            return None
-        has_priority = first_zone.zone_type is ZoneType.PRIORITY
-        initial_cost = (
-            first_zone.entry_duration,
-            0 if has_priority else 1,
-        )
-        paths: list[tuple[int, int, int, str, bool]] = [
-            (*initial_cost, 0, first_hop, has_priority)
-        ]
-        best_costs: dict[str, tuple[int, int]] = {first_hop: initial_cost}
+    def _route(
+        self,
+        zones: dict[tuple[str, int], int],
+        links: dict[tuple[str, str, int], int],
+        deadline: int,
+    ) -> list[tuple[str, int]]:
+        """Find the earliest arrival; prefer priority zones on equal costs."""
+        start = self._graph.start
+        end = self._graph.end
+        if start.is_blocked or end.is_blocked:
+            raise PlannerError("no usable route")
+        penalty = 0 if start.zone_type is ZoneType.PRIORITY else 1
+        paths = [(0, penalty, 0, start.name)]
+        best = {(start.name, 0): penalty}
+        parents: dict[tuple[str, int], tuple[str, int]] = {}
         sequence = 0
 
         while paths:
-            turns, priority_penalty, _, zone_name, path_has_priority = heappop(
-                paths
-            )
-            if best_costs[zone_name] != (turns, priority_penalty):
+            turn, penalty, _, name = heappop(paths)
+            state = (name, turn)
+            if best[state] != penalty:
                 continue
-            if zone_name == self._graph.end.name:
-                return (turns, priority_penalty)
-            for neighbor in self._graph.neighbors(zone_name):
-                destination = self._graph.zone(neighbor)
+            if name == end.name:
+                route = [state]
+                while state in parents:
+                    state = parents[state]
+                    route.append(state)
+                return route[::-1]
+
+            for destination in (*self._graph.neighbors(name), name):
+                zone = self._graph.zone(destination)
+                if zone.is_blocked:
+                    continue
+                arrival = turn + (
+                    1 if destination == name else zone.entry_duration
+                )
+                if arrival > deadline:
+                    continue
                 if (
-                    neighbor == origin
-                    or destination.is_blocked
-                    or (
-                        origin != self._graph.start.name
-                        and neighbor == self._graph.start.name
-                    )
+                    destination not in {start.name, end.name}
+                    and zones.get((destination, arrival), 0) >= zone.max_drones
                 ):
                     continue
-                next_has_priority = (
-                    path_has_priority
-                    or destination.zone_type is ZoneType.PRIORITY
+                if destination != name:
+                    connection = self._graph.connection(name, destination)
+                    # Restricted arrivals release their link in the same turn.
+                    if links.get((*connection.key, turn + 1), 0) >= (
+                        connection.max_link_capacity
+                    ):
+                        continue
+                next_penalty = (
+                    0 if zone.zone_type is ZoneType.PRIORITY else penalty
                 )
-                candidate_cost = (
-                    turns + destination.entry_duration,
-                    0 if next_has_priority else 1,
-                )
-                previous_cost = best_costs.get(neighbor)
-                if (
-                    previous_cost is not None
-                    and candidate_cost >= previous_cost
-                ):
+                next_state = (destination, arrival)
+                if best.get(next_state, 2) <= next_penalty:
                     continue
-                best_costs[neighbor] = candidate_cost
+                best[next_state] = next_penalty
+                parents[next_state] = state
                 sequence += 1
-                heappush(
-                    paths,
-                    (
-                        candidate_cost[0],
-                        candidate_cost[1],
-                        sequence,
-                        neighbor,
-                        next_has_priority,
-                    ),
-                )
-        return None
+                heappush(paths, (arrival, next_penalty, sequence, destination))
+        raise PlannerError("no usable route")

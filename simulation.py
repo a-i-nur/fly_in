@@ -1,5 +1,6 @@
 """Authoritative runtime values for Fly-in simulation."""
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TypeAlias
@@ -99,11 +100,6 @@ class Simulation:
                 raise SimulationError(f"unknown drone id: {drone_id}")
             if self._graph.zone(drone.zone_name).is_blocked:
                 raise SimulationError(f"source is blocked: {drone.zone_name}")
-            if (
-                destination == self._graph.start.name
-                and drone.zone_name != self._graph.start.name
-            ):
-                raise SimulationError("start re-entry is not allowed")
             if destination not in self._graph.neighbors(drone.zone_name):
                 raise SimulationError(
                     f"destination is not adjacent: {destination}"
@@ -111,40 +107,32 @@ class Simulation:
             if self._graph.zone(destination).is_blocked:
                 raise SimulationError(f"destination is blocked: {destination}")
 
-        next_zone_names = {
-            drone_id: drone.zone_name
-            for drone_id, drone in self._drones.items()
-        }
-        reserved_destinations = [
+        occupancy = Counter(
             transit.destination for transit in self._transits.values()
-        ]
-        for drone_id, destination in moves.items():
-            if self._graph.zone(destination).entry_duration == 2:
-                del next_zone_names[drone_id]
-                reserved_destinations.append(destination)
+        )
+        next_arrivals: Counter[str] = Counter()
+        for drone_id, drone in self._drones.items():
+            destination = moves.get(drone_id, drone.zone_name)
+            if drone_id in moves and (
+                self._graph.zone(destination).entry_duration == 2
+            ):
+                next_arrivals[destination] += 1
             else:
-                next_zone_names[drone_id] = destination
-        occupancy: dict[str, int] = {}
-        for zone_name in [
-            *next_zone_names.values(),
-            *reserved_destinations,
-        ]:
-            if zone_name in {self._graph.start.name, self._graph.end.name}:
-                continue
-            occupancy[zone_name] = occupancy.get(zone_name, 0) + 1
-        for zone_name, drone_count in occupancy.items():
-            if drone_count > self._graph.zone(zone_name).max_drones:
-                raise SimulationError(f"zone capacity exceeded: {zone_name}")
+                occupancy[destination] += 1
+        for usage in (occupancy, next_arrivals):
+            for zone_name, drone_count in usage.items():
+                if zone_name in {self._graph.start.name, self._graph.end.name}:
+                    continue
+                if drone_count > self._graph.zone(zone_name).max_drones:
+                    raise SimulationError(
+                        f"zone capacity exceeded: {zone_name}"
+                    )
 
-        link_use: dict[tuple[str, str], int] = {}
-        for transit in self._transits.values():
-            link_use[transit.connection_key] = (
-                link_use.get(transit.connection_key, 0) + 1
-            )
+        link_use: Counter[tuple[str, str]] = Counter()
         for drone_id, destination in moves.items():
             source = self._drones[drone_id].zone_name
             connection = self._graph.connection(source, destination)
-            link_use[connection.key] = link_use.get(connection.key, 0) + 1
+            link_use[connection.key] += 1
         for connection_key, drone_count in link_use.items():
             connection = self._graph.connection(*connection_key)
             if drone_count > connection.max_link_capacity:
@@ -206,9 +194,7 @@ class Simulation:
         self._transits = next_transits
         self._delivered_count = next_delivered_count
         self._turn += 1
-        zone_use: dict[str, int] = {}
-        for drone in next_drones.values():
-            zone_use[drone.zone_name] = zone_use.get(drone.zone_name, 0) + 1
+        zone_use = Counter(drone.zone_name for drone in next_drones.values())
         return TurnResult(
             self._turn,
             tuple(arrivals),

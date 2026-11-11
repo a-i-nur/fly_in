@@ -1,5 +1,7 @@
 .venv
 .mypy_cache
+__pycache__/
+*.py[cod]
 subject
 maps.tar.gz
-README.md
+.flake8

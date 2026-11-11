@@ -7,7 +7,7 @@ import sys
 from output import OutputFormatter
 from parser import MapParser, ParseError
 from planner import Planner, PlannerError
-from simulation import Simulation
+from simulation import Simulation, SimulationError
 
 
 class FlyInApplication:
@@ -63,6 +63,7 @@ class FlyInApplication:
             graphical_errors = (PygameError,)
             visualizer = GraphicalVisualizer(graph)
         try:
+            schedule = planner.plan(drone_count)
             if visualizer is not None:
                 visualizer.open(
                     simulation.drones,
@@ -72,9 +73,7 @@ class FlyInApplication:
             while not simulation.is_complete:
                 if visualizer is not None and not visualizer.wait_for_step():
                     return 0
-                result = simulation.advance(
-                    planner.propose(simulation.drones, simulation.transits)
-                )
+                result = simulation.advance(schedule[simulation.turn])
                 print(formatter.format_turn(result))
                 if visualizer is not None:
                     visualizer.render_committed(
@@ -85,7 +84,7 @@ class FlyInApplication:
                     )
             if visualizer is not None:
                 visualizer.wait_for_close()
-        except PlannerError as error:
+        except (PlannerError, SimulationError) as error:
             print(error, file=sys.stderr)
             return 1
         except graphical_errors as error:
