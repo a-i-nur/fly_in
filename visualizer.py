@@ -28,6 +28,7 @@ class GraphicalVisualizer:
     GRID_PIXELS = 80
     ZONE_RADIUS = 21
     DEFAULT_SIZE = (1200, 800)
+    MINIMUM_SIZE = (960, 640)
     DESKTOP_MARGIN = 80
     DRONE_COLOR: Color = (255, 255, 255)
     DRONE_OUTLINE: Color = (20, 24, 32)
@@ -42,6 +43,9 @@ class GraphicalVisualizer:
         self._last_drones: tuple[DroneState, ...] = ()
         self._last_transits: tuple[TransitState, ...] = ()
         self._last_delivered_count = 0
+        self._zoom = 1.0
+        self._offset: ScreenPoint = (0.0, 0.0)
+        self._mouse: tuple[int, int] | None = None
 
     def show(self) -> None:
         """Open the static window until the user closes it."""
@@ -56,12 +60,19 @@ class GraphicalVisualizer:
         delivered_count: int = 0,
     ) -> None:
         """Open and draw detached initial state without advancing a turn."""
-        pygame.init()
+        pygame.display.init()
+        pygame.font.init()
         desktops = pygame.display.get_desktop_sizes()
         size = (
             (
-                max(1, desktops[0][0] - self.DESKTOP_MARGIN),
-                max(1, desktops[0][1] - self.DESKTOP_MARGIN),
+                max(self.MINIMUM_SIZE[0], min(
+                    self.DEFAULT_SIZE[0],
+                    desktops[0][0] - self.DESKTOP_MARGIN,
+                )),
+                max(self.MINIMUM_SIZE[1], min(
+                    self.DEFAULT_SIZE[1],
+                    desktops[0][1] - self.DESKTOP_MARGIN,
+                )),
             )
             if desktops
             else self.DEFAULT_SIZE
@@ -88,10 +99,10 @@ class GraphicalVisualizer:
             event = pygame.event.wait()
             if event.type == pygame.QUIT:
                 return False
-            elif event.type == pygame.VIDEORESIZE:
-                self._resize(event.size)
             elif event.type == pygame.KEYUP and event.key == pygame.K_SPACE:
                 return True
+            else:
+                self._handle_view_event(event)
 
     def wait_for_close(self) -> None:
         """Keep the final committed view visible until the window closes."""
@@ -101,8 +112,7 @@ class GraphicalVisualizer:
             event = pygame.event.wait()
             if event.type == pygame.QUIT:
                 return
-            if event.type == pygame.VIDEORESIZE:
-                self._resize(event.size)
+            self._handle_view_event(event)
 
     def render_committed(
         self,
@@ -140,22 +150,67 @@ class GraphicalVisualizer:
             if event.type == pygame.QUIT:
                 self._close_requested = True
                 return True
-            if event.type == pygame.VIDEORESIZE:
-                self._resize(event.size)
+            self._handle_view_event(event, redraw=False)
         return False
+
+    def _handle_view_event(
+        self, event: pygame.event.Event, redraw: bool = True,
+    ) -> None:
+        """Update the camera and hover details without advancing a turn."""
+        if self._surface is None:
+            return
+        if event.type == pygame.VIDEORESIZE:
+            self._resize(event.size, redraw)
+            return
+        if event.type == pygame.MOUSEWHEEL:
+            zoom = min(8.0, max(1.0, self._zoom * 1.25 ** event.y))
+            factor = zoom / self._zoom
+            center = self._surface.get_rect().center
+            mouse = self._mouse or pygame.mouse.get_pos()
+            offset = [
+                mouse[i] - center[i]
+                - (mouse[i] - center[i] - self._offset[i]) * factor
+                for i in range(2)
+            ]
+            self._offset = (offset[0], offset[1])
+            self._zoom = zoom
+        elif event.type == pygame.MOUSEMOTION:
+            self._mouse = event.pos
+            if event.buttons[0]:
+                self._offset = (
+                    self._offset[0] + event.rel[0],
+                    self._offset[1] + event.rel[1],
+                )
+        elif event.type == pygame.KEYUP and event.key == pygame.K_r:
+            self._zoom, self._offset = 1.0, (0.0, 0.0)
+        else:
+            return
+        if redraw:
+            self._redraw()
 
     def close(self) -> None:
         """Release the Pygame window after application execution ends."""
         pygame.quit()
         self._surface = None
 
-    def _resize(self, size: tuple[int, int]) -> None:
+    def _resize(self, size: tuple[int, int], redraw: bool = True) -> None:
         """Recreate and redraw the resizable display surface."""
+        size = (max(size[0], self.MINIMUM_SIZE[0]),
+                max(size[1], self.MINIMUM_SIZE[1]))
         self._surface = pygame.display.set_mode(size, pygame.RESIZABLE)
+        if redraw:
+            self._redraw()
+
+    def _redraw(self) -> None:
+        """Refresh the current committed state after a view change."""
+        if self._surface is None:
+            return
         result = self._last_result
         segments: tuple[MovementSegment, ...] = ()
         if result is not None:
-            segments = self.movement_segments(result, *size)
+            segments = self.movement_segments(
+                result, *self._surface.get_size()
+            )
         self.draw(
             self._surface,
             segments,
@@ -188,29 +243,54 @@ class GraphicalVisualizer:
             surface, positions, result, drones, shown_delivered_count
         )
         moving = {drone_id for drone_id, _, _ in segments}
+        markers: dict[ScreenPoint, list[int]] = {}
         for drone in drones:
             if drone.drone_id not in moving and drone.zone_name not in {
                 self._graph.start.name, self._graph.end.name,
             }:
-                self._draw_drone(
-                    surface, drone.drone_id, positions[drone.zone_name]
+                markers.setdefault(positions[drone.zone_name], []).append(
+                    drone.drone_id
                 )
         for transit in transits:
             if transit.drone_id not in moving:
                 position = self._midpoint(
                     *(positions[name] for name in transit.connection_key)
                 )
-                self._draw_drone(surface, transit.drone_id, position)
-        self._draw_movement(surface, segments, progress, result)
+                markers.setdefault(position, []).append(transit.drone_id)
+        terminal_ids = self._delivered_ids(result) | {
+            drone.drone_id for drone in drones
+            if drone.zone_name == self._graph.start.name
+        }
+        for drone_id, start, end in segments:
+            if progress >= 1.0 and drone_id in terminal_ids:
+                continue
+            position = self._interpolate(start, end, progress)
+            markers.setdefault(position, []).append(drone_id)
+        for position, ids in markers.items():
+            columns = min(len(ids), 3)
+            rows = math.ceil(len(ids) / columns)
+            for index, drone_id in enumerate(sorted(ids)):
+                self._draw_drone(surface, drone_id, (
+                    position[0] + (index % columns - (columns - 1) / 2) * 24,
+                    position[1] + (index // columns - (rows - 1) / 2) * 24,
+                ))
         turn = 0 if result is None else result.turn
         self._draw_turn(surface, f"Turn: {turn}")
+        self._draw_details(surface, positions, drones, transits)
         pygame.display.flip()
 
     def _draw_turn(self, surface: pygame.Surface, text: str) -> None:
-        """Draw the sole top-left status line."""
+        """Draw the turn and a persistent keyboard and mouse hint."""
+        pygame.draw.rect(surface, self.BACKGROUND,
+                         (0, 0, surface.get_width(), 62))
         font = pygame.font.Font(None, 28)
         label = font.render(text, True, self.LABEL_COLOR)
         surface.blit(label, (12, 12))
+        hint = pygame.font.Font(None, 20).render(
+            "Space: next turn | Wheel: zoom | Drag: pan | R: fit | "
+            "Hover: zone details", True, self.LABEL_COLOR
+        )
+        surface.blit(hint, (12, 40))
 
     def movement_segments(
         self, result: TurnResult, width: int, height: int
@@ -246,25 +326,12 @@ class GraphicalVisualizer:
         start: ScreenPoint, end: ScreenPoint, progress: float
     ) -> ScreenPoint:
         """Return one presentation position between committed endpoints."""
+        if progress >= 1.0:
+            return end
         return (
             start[0] + (end[0] - start[0]) * progress,
             start[1] + (end[1] - start[1]) * progress,
         )
-
-    def _draw_movement(
-        self,
-        surface: pygame.Surface,
-        segments: tuple[MovementSegment, ...],
-        progress: float,
-        result: TurnResult | None,
-    ) -> None:
-        """Draw each committed drone at its presentation-only position."""
-        delivered_ids = self._delivered_ids(result)
-        for drone_id, start, end in segments:
-            if progress >= 1.0 and drone_id in delivered_ids:
-                continue
-            position = self._interpolate(start, end, progress)
-            self._draw_drone(surface, drone_id, position)
 
     def _displayed_delivered_count(
         self,
@@ -311,13 +378,14 @@ class GraphicalVisualizer:
         available_width = max(width - 2 * self.PADDING, 1)
         available_height = max(height - 2 * self.PADDING, 1)
         scale = min(available_width / span_x, available_height / span_y)
+        scale *= self._zoom
         center_x = (minimum_x + maximum_x) / 2
         center_y = (minimum_y + maximum_y) / 2
 
         return {
             zone.name: (
-                width / 2 + (zone.x - center_x) * scale,
-                height / 2 - (zone.y - center_y) * scale,
+                width / 2 + self._offset[0] + (zone.x - center_x) * scale,
+                height / 2 + self._offset[1] - (zone.y - center_y) * scale,
             )
             for zone in self._graph.zones
         }
@@ -352,7 +420,7 @@ class GraphicalVisualizer:
         available_width = max(width - 2 * self.PADDING, 1)
         available_height = max(height - 2 * self.PADDING, 1)
         scale = min(available_width / span_x, available_height / span_y)
-        target = self.GRID_PIXELS / scale
+        target = self.GRID_PIXELS / (scale * self._zoom)
 
         for exponent in range(-9, 10):
             magnitude = 10.0 ** exponent
@@ -447,9 +515,11 @@ class GraphicalVisualizer:
             if result is not None
             else self._initial_zone_usage(drones)
         )
-        for zone in self._graph.zones:
+        for index, zone in enumerate(self._graph.zones, 1):
             position = positions[zone.name]
-            radius = self._zone_radius(zone)
+            gap = self._zone_label_width(zone, positions)
+            compact = gap < 100
+            radius = min(self._zone_radius(zone), max(12, gap // 3))
             pygame.draw.circle(
                 surface,
                 self.resolve_color(zone.color),
@@ -480,21 +550,22 @@ class GraphicalVisualizer:
             self._draw_zone_text(
                 surface,
                 font,
-                self._shortened_zone_name(font, zone, positions),
-                (position[0], position[1] - radius - 14),
+                (f"Z{index}" if compact and zone.role is ZoneRole.HUB else
+                 self._shorten_text(font, zone.name, gap)),
+                (position[0], position[1] - radius - 10),
             )
-            self._draw_zone_text(
-                surface,
-                font,
-                self._shortened_zone_type(font, zone, positions),
-                (position[0], position[1] + radius + 12),
-            )
+            if not compact:
+                self._draw_zone_text(
+                    surface, font, zone.zone_type.value,
+                    (position[0], position[1] + radius + 12),
+                )
             if zone.role not in {ZoneRole.START, ZoneRole.END}:
                 self._draw_zone_text(
                     surface,
                     font,
                     self._zone_usage_text(zone, usage),
-                    (position[0], position[1] + radius + 30),
+                    (position if compact else
+                     (position[0], position[1] + radius + 30)),
                 )
 
     def _draw_terminal_count(
@@ -509,29 +580,37 @@ class GraphicalVisualizer:
         rectangle = label.get_rect(center=position)
         surface.blit(label, rectangle)
 
-    def _shortened_zone_name(
-        self,
-        font: pygame.font.Font,
-        zone: Zone,
-        positions: dict[str, ScreenPoint],
-    ) -> str:
-        """Fit a zone name between nearby zone centers with an ellipsis."""
-        return self._shorten_text(
-            font, zone.name, self._zone_label_width(zone, positions)
+    def _draw_details(
+        self, surface: pygame.Surface, positions: dict[str, ScreenPoint],
+        drones: tuple[DroneState, ...], transits: tuple[TransitState, ...],
+    ) -> None:
+        """Show the full hovered zone identity and committed occupants."""
+        mouse = self._mouse
+        if mouse is None:
+            return
+        index, zone = min(enumerate(self._graph.zones, 1), key=lambda item:
+                          math.dist(mouse, positions[item[1].name]))
+        if math.dist(mouse, positions[zone.name]) > self.ZONE_RADIUS + 8:
+            return
+        ids = [f"D{d.drone_id}" for d in drones if d.zone_name == zone.name]
+        incoming = [f"D{t.drone_id}" for t in transits
+                    if t.destination == zone.name]
+        limit = (str(zone.max_drones) if zone.role is ZoneRole.HUB else
+                 "unlimited")
+        lines = (
+            f"Z{index}: {zone.name} | {zone.zone_type.value} | "
+            f"{len(ids)}/{limit}",
+            f"Drones: {', '.join(ids) or '-'} | "
+            f"In transit here: {', '.join(incoming) or '-'}",
         )
-
-    def _shortened_zone_type(
-        self,
-        font: pygame.font.Font,
-        zone: Zone,
-        positions: dict[str, ScreenPoint],
-    ) -> str:
-        """Fit a zone type below the same dense-map zone gap."""
-        return self._shorten_text(
-            font,
-            zone.zone_type.value,
-            self._zone_label_width(zone, positions),
+        font = pygame.font.Font(None, 22)
+        pygame.draw.rect(
+            surface, self.BACKGROUND,
+            (0, surface.get_height() - 64, surface.get_width(), 64),
         )
+        for row, text in enumerate(lines):
+            surface.blit(font.render(text, True, self.LABEL_COLOR),
+                         (12, surface.get_height() - 56 + row * 24))
 
     @staticmethod
     def _zone_label_width(
@@ -606,6 +685,7 @@ class GraphicalVisualizer:
         position: ScreenPoint,
     ) -> None:
         """Draw one zone label at its exact precomputed position."""
-        label = font.render(text, True, GraphicalVisualizer.LABEL_COLOR)
+        label = font.render(text, True, GraphicalVisualizer.LABEL_COLOR,
+                            GraphicalVisualizer.BACKGROUND)
         rectangle = label.get_rect(center=position)
         surface.blit(label, rectangle)
