@@ -4,4 +4,4 @@ __pycache__/
 *.py[cod]
 subject
 maps.tar.gz
-.flake8
+.

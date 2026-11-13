@@ -24,5 +24,5 @@ clean:
 	rm -rf .mypy_cache
 
 lint:
-	flake8 .
+	flake8 . --extend-exclude=$(VENV)
 	mypy . --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
