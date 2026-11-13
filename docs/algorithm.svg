@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="850" viewBox="0 0 720 850" role="img" aria-labelledby="title desc">
+  <title id="title">Fly-in planning and execution</title>
+  <desc id="desc">Parse the map, then find and reserve a route for each drone in ID order. Stop with an error if no route exists. Once all routes are planned, validate and commit each turn, then produce movement output and optional visualization.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#475569"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #172033; text-anchor: middle; font-size: 17px; }
+      .small { font-size: 14px; fill: #475569; }
+      .box { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 1.5; }
+      .plan { fill: #eff6ff; stroke: #60a5fa; stroke-width: 1.5; }
+      .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="720" height="850" rx="16" fill="#ffffff"/>
+  <text x="360" y="35" font-weight="bold" font-size="21">Plan first, then simulate</text>
+
+  <rect class="box" x="130" y="60" width="400" height="64" rx="10"/>
+  <text x="330" y="87">Parse and validate the map</text>
+  <text class="small" x="330" y="109">Build zones and bidirectional connections</text>
+  <path class="line" d="M330 124 V154"/>
+
+  <rect class="plan" x="130" y="156" width="400" height="56" rx="10"/>
+  <text x="330" y="190">Pick the next drone in ID order</text>
+  <path class="line" d="M330 212 V242"/>
+
+  <rect class="plan" x="130" y="244" width="400" height="96" rx="10"/>
+  <text x="330" y="271" font-weight="bold">Search states (zone, turn)</text>
+  <text class="small" x="330" y="296">Move or wait; exclude blocked zones</text>
+  <text class="small" x="330" y="319">Respect zone and connection reservations</text>
+  <path class="line" d="M530 292 H574"/>
+  <text class="small" x="615" y="262">No route</text>
+  <rect x="576" y="274" width="106" height="40" rx="8" fill="#fff1f2" stroke="#fb7185"/>
+  <text x="629" y="300">Error</text>
+  <path class="line" d="M330 340 V384"/>
+  <text class="small" x="394" y="367">Route found</text>
+
+  <rect class="plan" x="130" y="386" width="400" height="64" rx="10"/>
+  <text x="330" y="413">Reserve this drone's route</text>
+  <text class="small" x="330" y="435">Record zone occupancy and link use by turn</text>
+  <path class="line" d="M130 418 H55 V184 H128"/>
+  <text class="small" x="164" y="479">More drones: repeat</text>
+  <path class="line" d="M330 450 V518"/>
+  <text class="small" x="419" y="495">All drones planned</text>
+
+  <rect class="box" x="130" y="520" width="400" height="56" rx="10"/>
+  <text x="330" y="554">Complete fleet schedule</text>
+  <path class="line" d="M330 576 V614"/>
+
+  <rect class="box" x="130" y="616" width="400" height="76" rx="10"/>
+  <text x="330" y="645">Execute each scheduled turn</text>
+  <text class="small" x="330" y="672">Validate the entire batch, then commit</text>
+  <path class="line" d="M330 692 V730"/>
+
+  <rect x="130" y="732" width="400" height="64" rx="10" fill="#ecfdf5" stroke="#34d399" stroke-width="1.5"/>
+  <text x="330" y="759">Movement output + optional viewer</text>
+  <text class="small" x="330" y="782">Display the committed state after each turn</text>
+  <text class="small" x="360" y="828">Blue steps repeat once per drone before simulation starts.</text>
+</svg>
