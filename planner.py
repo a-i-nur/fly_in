@@ -48,21 +48,21 @@ class Planner:
         links: dict[tuple[str, str, int], int],
         deadline: int,
     ) -> list[tuple[str, int]]:
-        """Find the earliest arrival; prefer priority zones on equal costs."""
+        """Find earliest arrival, breaking ties by priority and fewer moves."""
         start = self._graph.start
         end = self._graph.end
         if start.is_blocked or end.is_blocked:
             raise PlannerError("no usable route")
         penalty = 0 if start.zone_type is ZoneType.PRIORITY else 1
-        paths = [(0, penalty, 0, start.name)]
-        best = {(start.name, 0): penalty}
+        paths = [(0, penalty, 0, 0, start.name)]
+        best = {(start.name, 0): (penalty, 0)}
         parents: dict[tuple[str, int], tuple[str, int]] = {}
         sequence = 0
 
         while paths:
-            turn, penalty, _, name = heappop(paths)
+            turn, penalty, move_count, _, name = heappop(paths)
             state = (name, turn)
-            if best[state] != penalty:
+            if best[state] != (penalty, move_count):
                 continue
             if name == end.name:
                 route = [state]
@@ -96,10 +96,15 @@ class Planner:
                     0 if zone.zone_type is ZoneType.PRIORITY else penalty
                 )
                 next_state = (destination, arrival)
-                if best.get(next_state, 2) <= next_penalty:
+                next_move_count = move_count + (destination != name)
+                score = (next_penalty, next_move_count)
+                if best.get(next_state, (2, 0)) <= score:
                     continue
-                best[next_state] = next_penalty
+                best[next_state] = score
                 parents[next_state] = state
                 sequence += 1
-                heappush(paths, (arrival, next_penalty, sequence, destination))
+                heappush(paths, (
+                    arrival, next_penalty, next_move_count,
+                    sequence, destination,
+                ))
         raise PlannerError("no usable route")

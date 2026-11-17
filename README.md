@@ -116,6 +116,8 @@ takes two. Blocked zones are skipped.
 
 The search finds the earliest possible arrival at the end. If two routes
 arrive at the same time, it prefers one that visits a priority zone.
+When arrival time and priority preference are equal, it prefers fewer moves.
+Waiting does not count as a move, so an unnecessary detour loses to waiting.
 Once a route is chosen, the planner reserves its zone and connection capacity
 for the required turns. The next drone must respect those reservations. It
 can wait, take another path, or enter a zone as another drone leaves it.
