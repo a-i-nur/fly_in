@@ -24,7 +24,7 @@ class GraphicalVisualizer:
     CONNECTION_COLOR: Color = (144, 153, 168)
     LABEL_COLOR: Color = (235, 239, 245)
     FALLBACK_COLOR: Color = (210, 214, 220)
-    PADDING = 80
+    PADDING = 110
     GRID_PIXELS = 80
     ZONE_RADIUS = 21
     DEFAULT_SIZE = (1200, 800)
