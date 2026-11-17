@@ -415,6 +415,8 @@ class GraphicalVisualizer:
         """Return grid coordinates spanning one map axis."""
         first = math.floor(minimum / step)
         last = math.ceil(maximum / step)
+        if last - first + 1 > 1000:
+            return ()
         return tuple(index * step for index in range(first, last + 1))
 
     def _draw_connections(
