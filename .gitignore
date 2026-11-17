@@ -2,6 +2,6 @@
 .mypy_cache
 __pycache__/
 *.py[cod]
-subject
+subject*
 maps.tar.gz
 .
