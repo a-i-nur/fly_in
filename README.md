@@ -102,6 +102,10 @@ Restricted departures use `D<ID>-<source>-<destination>`, followed by
 Delivered drones leave the simulation. Input errors report their line and
 cause; an unreachable end produces a clear planning error.
 
+At 1000 drones, 100 zones (including start and end), or 1000 connections,
+the program prints a size warning to stderr before planning. Calculation
+continues normally; this warning does not predict the actual runtime.
+
 ## Algorithm
 
 The parser builds the graph without a graph library. Each zone stores its

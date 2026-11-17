@@ -44,6 +44,11 @@ class FlyInApplication:
             print(error, file=sys.stderr)
             return 1
 
+        if (drone_count >= 1000 or graph.zone_count >= 100
+                or graph.connection_count >= 1000):
+            print("Warning: large map or fleet; planning may take some time.",
+                  file=sys.stderr)
+
         planner = Planner(graph)
         simulation = Simulation(graph, drone_count)
         formatter = OutputFormatter()
