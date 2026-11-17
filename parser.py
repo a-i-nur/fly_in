@@ -113,7 +113,7 @@ class MapParser:
                         ) from error
                 elif key == "color":
                     color = tag_value
-                else:
+                elif role is ZoneRole.HUB:
                     try:
                         max_drones = int(tag_value)
                     except ValueError as error:
