@@ -4,3 +4,5 @@ __pycache__/
 *.py[cod]
 subject*
 maps.tar.gz
+eval_sheet.pdf
+eval_sheet_new.html

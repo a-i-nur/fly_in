@@ -24,6 +24,11 @@ class FlyInApplication:
             action="store_true",
             help="step the simulation in a graphical window",
         )
+        parser.add_argument(
+            "--capacity-info",
+            action="store_true",
+            help="show capacity usage after each turn",
+        )
         arguments = parser.parse_args()
 
         try:
@@ -80,6 +85,8 @@ class FlyInApplication:
                     return 0
                 result = simulation.advance(schedule[simulation.turn])
                 print(formatter.format_turn(result))
+                if arguments.capacity_info:
+                    print(formatter.format_capacity_info(result, graph))
                 if visualizer is not None:
                     visualizer.render_committed(
                         result,
